@@ -1,0 +1,24 @@
+{
+  "fragments": [
+    {
+      "name": "CompanyInfo",
+      "definition": "fragment CompanyInfo on Company { id displayName homepage shortDescription companyType }",
+      "query_string": "...CompanyInfo"
+    },
+    {
+      "name": "CreditScore",
+      "definition": "fragment CurrentCreditRating on CreditSafeCreditRating { commonValue commonDescription } fragment CreditScore on Company { creditScore { currentCreditRating { ...CurrentCreditRating } } }",
+      "query_string": "...CreditScore"
+    },
+    {
+      "name": "ComplianceData",
+      "definition": "fragment ComplianceData on Company { complianceData { datasets id } }",
+      "query_string": "...ComplianceData"
+    },
+    {
+      "name": "SecurityRatings",
+      "definition": "fragment SecurityRatings on Company { securityRatings { score grade datetime last30DaysScoreChange } }",
+      "query_string": "...SecurityRatings"
+    }
+  ]
+}
