@@ -1,20 +1,48 @@
 from typing import Any, ClassVar
+from enum import Enum
+import os
+from dotenv import load_dotenv
 from pydantic import (
     BaseModel,
     Field,
     computed_field,
+    model_serializer,
     model_validator,
     PydanticUndefinedAnnotation,
+    field_validator,
 )
 
+_ = load_dotenv()
 
-# GraphQL fragment definitions
+
+class CompanyIdentifier(Enum):
+    """Possible values for company identifier in query variables"""
+
+    DUNS = "duns"
+    CRAFT_ID = "id"
+    DOMAIN = "domain"
+
+
+class ApiConfig(BaseModel):
+    """Configuration for API client"""
+
+    api_key: str = os.getenv("KEY_CRAFT_SOLENG", "DEFAULT")
+    base_url: str = "https://api.craft.co/v1"
+    company_id_field: CompanyIdentifier = CompanyIdentifier.CRAFT_ID
+    headers: dict[str, str] = {
+        "x-craft-api-key": os.getenv("KEY_CRAFT_SOLENG", "DEFAULT"),
+        "Content-Type": "application/json",
+    }
+    query_string: str
+
+
 class Fragment(BaseModel):
     """GraphQL fragment definition"""
 
+    query_type: str
     name: str
     definition: str
-    query_string: str
+    spread: str
 
 
 class Fragments(BaseModel):
@@ -22,8 +50,25 @@ class Fragments(BaseModel):
 
     fragments: list[Fragment]
 
+    def included_fragments(self, condition) -> list[Fragment]:
+        """Select fragments to include"""
+        return [fragment for fragment in self.fragments if condition(fragment)]
 
-# Company creditsafe data
+    @model_serializer(mode="plain")
+    def export_graphql(self) -> dict[str, str]:
+        """Export fragment definitions and spreads as strings for use in graphQL query"""
+
+        return {
+            "definitions": " ".join(
+                [fragment.definition for fragment in self.fragments]
+            ),
+            "spreads": " ".join([fragment.spread for fragment in self.fragments]),
+        }
+
+
+class CraftPayload(BaseModel):
+    query: str
+    variables: dict[str, str | int]
 
 
 # Base class that handles values of None in fields replacing them with the field default value
@@ -45,93 +90,29 @@ class BaseModelReplaceNone(BaseModel):
         return data
 
 
+# CRAFT COMPANY
 class CurrentCreditRating(BaseModelReplaceNone):
     """Level 2 creditsafe data object"""
 
-    common_value: str = Field(default="Not available", alias="commonValue")
-    common_description: str = Field(default="Not available", alias="commonDescription")
+    common_value: str | None = Field(default="Not available", alias="commonValue")
+    common_description: str | None = Field(
+        default="Not available", alias="commonDescription"
+    )
 
 
 class CreditScore(BaseModelReplaceNone):
     """Level 1 creditsafe data object"""
 
-    current_credit_rating: CurrentCreditRating = Field(
+    current_credit_rating: CurrentCreditRating | None = Field(
         default_factory=lambda: CurrentCreditRating(), alias="currentCreditRating"
     )
 
 
 # Company compliance data
-class ComplianceEvidence(BaseModelReplaceNone):
-    title: str = Field(default="Not Available", alias="title")
-    summary: str = Field(default="Not Available", alias="summary")
-    credibility: str = Field(default="Not Available", alias="credibility")
-    asset_url: str = Field(default="Not Available", alias="assetUrl")
-    original_url: str = Field(default="Not Available", alias="originalUrl")
-    capture_date: str = Field(default="Not Available", alias="captureDateIso")
-    publication_date: str = Field(default="Not Available", alias="publicationDateIso")
-    language: str = Field(default="Not Available", alias="language")
-    keywords: str = Field(default="Not Available", alias="keywords")
-
-
-class ComplianceEvent(BaseModelReplaceNone):
-    """Level 3 compliance data events"""
-
-    event_type: str = Field(default="Not Available", alias="type")
-    currency_code: str = Field(default="Not Available", alias="currencyCode")
-    event_date: str = Field(default="Not Available", alias="dateIso")
-    evidences: list[ComplianceEvidence] = Field(
-        default_factory=list[ComplianceEvidence], alias="evidences"
-    )
-
-
-class ComplianceRelEntry(BaseModelReplaceNone):
-    """Level 2 compliance regulatory list entries"""
-
-    category: str = Field(default="Not Available", alias="category")
-    subcategory: str = Field(default="Not Available", alias="subcategory")
-    events: list[ComplianceEvent] = Field(
-        default_factory=list[ComplianceEvent], alias="events"
-    )
-
-
-class ComplianceAdvMediaEntry(BaseModelReplaceNone):
-    """Level 2 compliance adverse media entries"""
-
-    category: str = Field(default="Not Available", alias="category")
-    subcategory: str = Field(default="Not Available", alias="subcategory")
-    events: list[ComplianceEvent] = Field(
-        default_factory=list[ComplianceEvent], alias="events"
-    )
-
-
-class ComplianceIndividual(BaseModelReplaceNone):
-    """Level 3 compliance linked individual"""
-
-    first_name: str = Field(default="Not Available", alias="firstName")
-    last_name: str = Field(default="Not Available", alias="lastName")
-    relationship: str = Field(default="Not Available", alias="relationship")
-    ownership_percentage: float = Field(default=0, alias="ownershipPercentage")
-    datasets: list[str] = Field(default=["None"], alias="datasets")
-
-
-class CompliancePepEntry(BaseModelReplaceNone):
-    """Level 2 compliance pep list entries"""
-
-    position: str = Field(default="Not Available", alias="position")
-    segment: str = Field(default="Not Available", alias="segment")
-    status: str = Field(default="Not Available", alias="status")
-    tier: str = Field(default="Not Available", alias="tier")
-    country_code: str = Field(default="Not Available", alias="countryIsoCode")
-    date_from: str = Field(default="Not Available", alias="dateFrom")
-    date_to: str = Field(default="Not Available", alias="dateTo")
-    individual: ComplianceIndividual = Field(
-        default_factory=ComplianceIndividual, alias="individual"
-    )
-
-
-class BaseCompliance(BaseModelReplaceNone):
+class ComplianceData(BaseModelReplaceNone):
     """Base class with tag transformation."""
 
+    request_status: str | None = Field(default="NOT_REQUESTED", alias="requestStatus")
     datasets: list[str] = Field(default_factory=list, alias="datasets")
     # Define possible dataset item values and exclude from model export
     POSSIBLE_DATASETS: ClassVar[list[str]] = [
@@ -188,55 +169,184 @@ class BaseCompliance(BaseModelReplaceNone):
         return "PEP-FORMER" in self.datasets
 
 
-class ComplianceData(BaseCompliance):
-    """Level 1 compliance data object"""
-
-    id: int = Field(default=0, alias="id")
-
-
 class SecurityRating(BaseModelReplaceNone):
-    grade: str = Field(default="Not Available", alias="grade")
-    datetime: str = Field(default="Not Available", alias="datetime")
+    score: int | None = Field(default=0, alias="score")
+    grade: str | None = Field(default="Not Available", alias="grade")
+    datetime: str | None = Field(default="Not Available", alias="datetime")
 
 
-class Company(BaseModelReplaceNone):
+class SustainabilityRating(BaseModelReplaceNone):
+    overall: float | None = Field(default=0, alias="overall")
+    employee: float | None = Field(default=0, alias="employee")
+    environment: float | None = Field(default=0, alias="environment")
+    governance: float | None = Field(default=0, alias="governance")
+    last_updated_date: str | None = Field(default="Unknown", alias="lastUpdatedDate")
+
+
+class Period(BaseModelReplaceNone):
+    period_type: str | None = Field(default="Unknown", alias="periodType")
+    period_end_date: str | None = Field(default="Unknown", alias="endDate")
+
+
+class Ratios(BaseModelReplaceNone):
+    period: Period | None = Field(default_factory=Period, alias="period")
+    debt_to_assets_ratio: float | None = Field(default=0, alias="debtToAssetsRatio")
+    debt_to_equity_ratio: float | None = Field(default=0, alias="debtToEquityRatio")
+    quick_ratio: float | None = Field(default=0, alias="quickRatio")
+    current_ratio: float | None = Field(default=0, alias="currentRatio")
+
+
+class CraftCompany(BaseModelReplaceNone):
     """Primary company object"""
 
-    id: int
-    display_name: str = Field(default="None found", alias="displayName")
-    homepage: str | None = Field(default="None found", alias="homepage")
+    # FIXED: Using modern Python union syntax with '|'
+    id: int | str | None = Field(default=None, alias="id")
+    duns: int | str | None = Field(default=None, alias="duns")
+    display_name: str = Field(default="None Found", alias="displayName")
+    country_of_registration: str = Field(
+        default="None Found", alias="countryOfRegistration"
+    )
+    homepage: str | None = Field(default="None Found", alias="homepage")
     short_description: str | None = Field(
         default="None found", alias="shortDescription"
     )
-    company_type: str = Field(default="None found", alias="companyType")
-    credit_score: CreditScore = Field(default_factory=CreditScore, alias="creditScore")
-    compliance_data: ComplianceData = Field(
+    company_type: str = Field(default="None Found", alias="companyType")
+    credit_score: CreditScore | None = Field(
+        default_factory=CreditScore, alias="creditScore"
+    )
+    compliance_data: ComplianceData | None = Field(
         default_factory=ComplianceData, alias="complianceData"
     )
-    security_ratings: list[SecurityRating] = Field(
+    security_ratings: list[SecurityRating] | None = Field(
         alias="securityRatings", default_factory=lambda: [SecurityRating()]
     )
+    sustainability_rating: SustainabilityRating | None = Field(
+        alias="sustainabilityRating", default=None
+    )
+    # FIXED: Changed from single Ratios object to list of Ratios objects
+    financial_ratios: list[Ratios] | None = Field(alias="ratios", default_factory=list)
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def convert_id_to_int(cls, v):
+        """Convert string ID to integer"""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            try:
+                return int(v)
+            except ValueError:
+                return v  # Keep as string if conversion fails
+        return v
+
+    @field_validator("financial_ratios", mode="before")
+    @classmethod
+    def handle_ratios_array(cls, v):
+        """Handle ratios field that can be an empty array or array of objects"""
+        if v is None:
+            return []
+        if isinstance(v, list):
+            if len(v) == 0:
+                return []
+            # Convert each item in the list to a Ratios object
+            ratios_list = []
+            for item in v:
+                if isinstance(item, dict):
+                    ratios_list.append(item)  # Let Pydantic handle the conversion
+                else:
+                    ratios_list.append(item)
+            return ratios_list
+        return v
 
 
-class CompanyData(BaseModelReplaceNone):
-    """API response Data wrapper"""
+class CraftCompanyLite(BaseModelReplaceNone):
+    """Lite profile company object"""
 
-    company: Company
+    # FIXED: Using modern Python union syntax with '|'
+    id: int | str | None = Field(default=None, alias="id")
+    display_name: str = Field(default="None Found", alias="displayName")
+    homepage: str | None = Field(default="None Found", alias="homepage")
+    short_description: str | None = Field(
+        default="None found", alias="shortDescription"
+    )
+    company_type: str = Field(default="None Found", alias="companyType")
+    country_of_registration: str = Field(
+        default="Not Available", alias="countryOfRegistration"
+    )
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def convert_id_to_int(cls, v):
+        """Convert string ID to integer"""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            try:
+                return int(v)
+            except ValueError:
+                return v  # Keep as string if conversion fails
+        return v
 
 
-class Companies(BaseModelReplaceNone):
-    """Flat list of companies"""
+# DNB COMPANY
+class DnbPrimaryAddress(BaseModelReplaceNone):
+    country_code: str | None = Field(default="Not Available", alias="countryCode")
 
-    companies: list[Company]
+
+class DnbBusinessEntityType(BaseModelReplaceNone):
+    """Business entity type for D&B company"""
+
+    description: str | None = Field(default="Not Available", alias="description")
 
 
-class ApiResponse(BaseModelReplaceNone):
+class DnbCompanyBase(BaseModelReplaceNone):
+    """D&B Company object"""
+
+    duns: str = Field(default="None Found", alias="duns")
+    display_name: str | None = Field(default="Not Available", alias="displayName")
+    line_of_business: str | None = Field(
+        default="Not Available", alias="lineOfBusiness"
+    )
+    company_type: str | None = Field(default="Not Available", alias="companyType")
+    business_entity_type: DnbBusinessEntityType | None = Field(
+        default=None, alias="businessEntityType"
+    )
+    primary_address: DnbPrimaryAddress | None = Field(
+        default_factory=DnbPrimaryAddress, alias="primaryAddress"
+    )
+    craft_company: CraftCompanyLite | None = Field(alias="craftCompany")
+
+
+class DnbCompany(DnbCompanyBase):
+    """D&B Company object"""
+
+    dnb_ultimate_parent: DnbCompanyBase | None = Field(alias="globalUltimateParent")
+
+
+class CompanyData(BaseModel):
+    """API response Data wrapper for a Craft company"""
+
+    company: CraftCompany | None = Field(alias="company")
+
+
+class Companies(BaseModel):
+    dnb_companies: list[CompanyData]
+
+
+class ApiException(BaseModel):
+    variable_key: str | None = None
+    data: dict[str, Any] | None = None
+    error: str | None = None
+
+
+class ApiResponse(BaseModel):
     """Top-level API response"""
 
-    data: CompanyData
+    data: CompanyData | None = None
+    error: str | None = None
 
 
-class ApiResults(BaseModelReplaceNone):
+class ApiResults(BaseModel):
     """List of responses"""
 
-    results: list[ApiResponse]
+    results: list[ApiResponse | ApiException | None]

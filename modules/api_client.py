@@ -1,81 +1,44 @@
-import asyncio
 from typing import Any
 import httpx
-from modules.models import Company, Companies, ApiResponse
-from modules.helper_functions import chunk_list
+from modules.models import (
+    ApiConfig,
+    CompanyIdentifier,
+    CraftPayload,
+)
 
 
-async def fetch_company(
-    client: httpx.AsyncClient, QUERY: str, company_id: int
-) -> dict[str, Any] | Company:
-    """Fetch a single company from the craft API"""
-    try:
-        payload = {"query": QUERY, "variables": {"id": company_id}}
-        response = await client.post("https://api.craft.co/v1/query", json=payload)
-        _ = response.raise_for_status()
+class CraftApiClient:
+    """Initialise API client with settings for headers and query"""
 
-        api_response = ApiResponse.model_validate(response.json())
-        company = api_response.data.company
+    def __init__(self, api_config: ApiConfig) -> None:
+        self.company_id_field: CompanyIdentifier = api_config.company_id_field
+        self.query_string: str = api_config.query_string
+        self.client: httpx.AsyncClient = httpx.AsyncClient(
+            base_url=api_config.base_url,
+            headers=api_config.headers,
+            timeout=60.0,
+        )
 
-        return company
+    async def fetch_company(self, company_id_value: str | int) -> dict[str, Any]:
+        """Fetch craft data for a single company"""
 
-    except httpx.HTTPStatusError as e:
-        return {
-            "id": company_id,
-            "data": None,
-            "error": f"HTTP {e.response.status_code}: {str(e)}",
-        }
-    except httpx.RequestError as e:
-        return {"id": company_id, "data": None, "error": f"Request error: {str(e)}"}
-    except KeyError as e:
-        return {
-            "id": company_id,
-            "data": None,
-            "error": f"Missing key in response: {str(e)}",
-        }
-    except Exception as e:
-        return {
-            "id": company_id,
-            "data": None,
-            "error": f"Unexpected error: {type(e).__name__}: {str(e)}",
-        }
+        payload = CraftPayload(
+            query=self.query_string,
+            variables={self.company_id_field.value: company_id_value},
+        )
+        try:
+            response = await self.client.post(
+                "/query", json=payload.model_dump()
+            )  # Use relative path
+            _ = response.raise_for_status()
+            return response.json()
+        except (httpx.HTTPStatusError, httpx.RequestError, Exception) as e:
+            return {
+                "error": str(e),
+            }
 
+    async def __aenter__(self):
+        return self
 
-async def fetch_companies(QUERY: str, company_ids: list[int], api_key: str):
-    """
-    Fetch company data for a list of company_ids using a defined graphQL query.
-
-    Returns a list of companies with nested data flattened for downstream processing.
-    """
-    headers = {
-        "x-craft-api-key": api_key,
-        "Content-Type": "application/json",
-    }
-
-    async with httpx.AsyncClient(
-        headers=headers,
-        timeout=60.0,  # 30 second timeout
-        follow_redirects=True,
-    ) as client:
-        # Batch company_ids into groups of 100
-        batches = chunk_list(company_ids, 100)
-
-        all_responses = []
-
-        # Process each batch sequentially to avoid overwhelming the API
-        for batch in batches:
-            tasks = [fetch_company(client, QUERY, company_id) for company_id in batch]
-            batch_responses = await asyncio.gather(*tasks)
-            all_responses.extend(batch_responses)
-
-        company_results = Companies.model_validate({"companies": all_responses})
-
-        return company_results
-
-
-async def main():
-    print("Async API client to fetch data from the Craft API")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    async def __aexit__(self, *args: Any):
+        await self.client.aclose()

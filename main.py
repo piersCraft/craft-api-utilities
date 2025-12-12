@@ -1,50 +1,48 @@
 import asyncio
-import os
-from dotenv import load_dotenv
-from modules.database import (
-    initialise_duckdb_database,
-    load_companies_into_db_table,
-    write_db_table_to_csv,
-)
-from modules.api_client import fetch_companies
-from modules.helper_functions import (
-    construct_graphql_query,
-    read_ids_from_csv,
-    load_graphQL_query_fragments,
-    write_company_data_to_json,
-)
+from typing import Any
+from modules.api_client import CraftApiClient
+from modules.database import DuckDbClient
+from modules.models import ApiConfig, ApiResults
+from modules.helper_functions import read_ids_from_csv, async_batch_processor
 
-_ = load_dotenv()
+
+# TODO: Create a dictionary or enum for different query types that can be passed to ApiConfig
+query_string = """
+fragment Firmographics on Company { id duns displayName countryOfRegistration homepage shortDescription companyType }
+fragment CreditScore on Company { creditScore { currentCreditRating { commonValue commonDescription } } }
+fragment ComplianceData on Company { complianceData { datasets requestStatus } }
+fragment SecurityRatings on Company { securityRatings { score grade datetime } }
+fragment DataBreaches on Company { dataBreaches { affectedRecordsCount date description provider } }
+query company ($id: ID!) { company(id: $id) {
+ ...Firmographics 
+ ...CreditScore
+ ...ComplianceData
+ ...SecurityRatings
+ ...DataBreaches
+} }
+"""
 
 
 async def main():
-    # Authorise Craft API client from key stored in .env file
-    API_KEY = os.getenv("KEY_CRAFT_SOLENG", "DEFAULT")
+    client_config = ApiConfig(query_string=query_string)
+    client = CraftApiClient(client_config)
+    ids: list[str | int] = read_ids_from_csv("tests/bc_partners_ids.csv")
+    results = {"results": await async_batch_processor(client.fetch_company, ids)}
 
-    # Construct graphql query string for the Craft API post request
-    fragments = load_graphQL_query_fragments()
-    query = construct_graphql_query(fragments)
+    company_data = ApiResults.model_validate(results)
 
-    # Read list of company ids from csv file
-    all_ids = read_ids_from_csv("all_ids.csv")
+    # TODO: Serialize to json and load to duckdb table
+    company_data_json = company_data.model_dump_json(indent=2)
 
-    # Fetch company data for each id in the list using the defined query string
-    company_results = await fetch_companies(query, all_ids, API_KEY)
+    db_client = DuckDbClient(database_path="bc_test.db")
+    _ = db_client.db_write_json_to_table(company_data_json)
+    _ = db_client.unpack_company_data()
+    _ = db_client.close()
 
-    # Write company results to json file
-    companies_json = write_company_data_to_json(company_results)
 
-    # Create duckDB database for convenient processing. Creates a file with .db extension in root directory
-    company_db = "company_data.db"
-    company_db = initialise_duckdb_database(database_file_path=company_db)
+# TODO: Run data transformations in Duckdb
 
-    # Import company data into a DuckDB database for easier manipulation and analysis
-    companies_table_name = load_companies_into_db_table(
-        companies_file_path=companies_json, database_file_path=company_db
-    )
-
-    # # Write company data to csv file
-    _ = write_db_table_to_csv(company_db, companies_table_name)
+# TODO: Export results to csv file
 
 
 if __name__ == "__main__":

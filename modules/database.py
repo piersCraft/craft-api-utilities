@@ -1,56 +1,74 @@
 from typing import Any
-import pandas as pd
-from pandas import DataFrame
 import duckdb as ddb
+import tempfile
+from pydantic import Json
 
 
-# Initialise duckDB client with a persistent database
-def initialise_duckdb_database(database_file_path: str = "company_data_store.db"):
-    """Initialise persistent duckDB database"""
-    _ = ddb.connect(database_file_path)
+class DuckDbClient:
+    def __init__(self, database_path: str = ":memory:"):
+        """
+        Initialize DuckDB client.
 
-    return database_file_path
+        Args:
+            database_path: Path to database file. Use ":memory:" for in-memory DB.
+        """
+        self.database_path: str = database_path
+        self.connection: ddb.DuckDBPyConnection = ddb.connect(database_path)
 
+    def db_write_json_to_table(self, data: Json[Any]) -> None:
+        """Write json data to duckdb table using temporary file method"""
 
-# Load company data into a database table
-def load_companies_into_db_table(
-    companies_file_path: str,
-    table_name: str = "companies",
-    database_file_path: str = ":memory:",
-):
-    """
-    Load a list of companies into an in-memory DuckDB table.
+        # Write JSON to temp file and load
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            _ = f.write(data)
+            temp_path = f.name
 
-    Args:
-        database_file_path: Path of the database to connect to. Defaults to in memory
-        companies_filepath: List of companies to load
+        _ = self.connection.execute(
+            f"CREATE OR REPLACE TABLE raw AS SELECT * FROM '{temp_path}'"
+        )
 
-    Returns:
-        List of tuples containing the first 5 rows
-    """
-    # connect to the database
-    client = ddb.connect(database_file_path)
-    # read json data and unpack the companies list to records
-    client.execute(
-        f"""CREATE OR REPLACE TABLE json_intake AS SELECT * FROM read_json({companies_file_path}, maximum_object_size=100000000)"""
-    )
-    client.execute(
-        f"""CREATE OR REPLACE TABLE companies_temp AS SELECT UNNEST(companies, recursive := true), FROM json_intake"""
-    )
-    client.execute(
-        f"""CREATE OR REPLACE TABLE {table_name} AS SELECT * EXCLUDE(security_ratings, id_1, datasets), security_ratings[1].grade as latest_security_rating_grade, security_ratings[1].datetime as latest_security_rating_date FROM companies_temp"""
-    )
-    # Display the first five rows of the company table
-    result = client.sql(f"""SELECT * FROM {table_name} LIMIT 5""")
-    result.show()
+    def unpack_company_data(self) -> None:
+        """Unpack nested company fields to columns from raw file"""
 
-    return table_name
+        _ = self.connection.execute(
+            """
+            CREATE OR REPLACE TABLE
+                companies
+            AS SELECT
+                unnest(
+                    results, max_depth:=4
+                )
+            FROM
+                raw
+            ;
+            """
+        )
 
+    # TODO: Risk scan calculations
+    def calculate_risk_scan_columns(self) -> None:
+        """Replicate risk scan columns"""
 
-# Save a database table to .csv
-def write_db_table_to_csv(database_file_path: str, table_name: str):
-    """Export table to .csv file"""
-    client = ddb.connect(database_file_path)
-    client.sql(f"""SELECT * FROM {table_name}""").write_csv(f"{table_name}.csv")
+        pass
 
-    return table_name
+    # TODO: Join tables on id
+    def join_tables(self, left_id: str, right_id: str) -> None:
+        """Replicate risk scan columns"""
+
+        pass
+
+    # TODO: Export results to csv
+    def export_table_to_csv(self) -> None:
+        """Replicate risk scan columns"""
+
+        pass
+
+    def summarize_table(self, table_name: str) -> Any:
+        """Create summary statistics to describe a table"""
+
+        return self.connection.sql(f"""SUMMARIZE {table_name}""").show()
+
+    def close(self) -> None:
+        """Close the database connection."""
+
+        if self.connection:
+            self.connection.close()
