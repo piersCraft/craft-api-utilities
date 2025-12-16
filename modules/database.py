@@ -1,6 +1,5 @@
 import duckdb as ddb
 import tempfile
-import pyarrow as pa
 from pyarrow import Table
 from pydantic import Json
 from typing import Any
@@ -42,6 +41,46 @@ class DuckDbClient:
         """Export a table to csv. Defaults to companies table"""
 
         _ = self.connection.execute(f"COPY {table_name} TO '{output_filepath}'")
+
+    def bc_partners_export_regulatory(self, from_table: str, to_table) -> None:
+        """Unpack regulatory enforcement events to a table"""
+
+        extract_compliance = self.connection.sql(
+            f"""
+            CREATE OR REPLACE TABLE
+                {to_table}
+            AS SELECT
+                company_id,
+                display_name,
+                unnest(compliance_data.regulatory_enforcements, recursive := true)
+            FROM
+                {from_table}
+            """
+        )
+
+        extract_enforcements = self.connection.sql(
+            f"""
+            CREATE OR REPLACE TABLE
+                enforcements
+            AS SELECT
+                *,
+                unnest(enforcements, recursive := true)
+            FROM
+                compliance
+            """
+        )
+
+        extract_events = self.connection.sql(
+            f"""
+            CREATE OR REPLACE TABLE
+                enforcement_events
+            AS SELECT
+                *,
+                unnest(evidences[1])
+            FROM
+                enforcements
+            """
+        )
 
     def close(self) -> None:
         """Close the database connection."""
