@@ -108,6 +108,71 @@ class CreditScore(BaseModelReplaceNone):
     )
 
 
+class ComplianceEvidence(BaseModelReplaceNone):
+    title: str | None = Field(default="Not Available", alias="title")
+    summary: str | None = Field(default="Not Available", alias="summary")
+    credibility: str | None = Field(default="Not Available", alias="credibility")
+    asset_url: str | None = Field(default="Not Available", alias="assetUrl")
+    original_url: str | None = Field(default="Not Available", alias="originalUrl")
+    capture_date: str | None = Field(default="Not Available", alias="captureDateIso")
+    publication_date: str | None = Field(
+        default="Not Available", alias="publicationDateIso"
+    )
+    language: str | None = Field(default="Not Available", alias="language")
+    keywords: str | None = Field(default="Not Available", alias="keywords")
+
+
+class ComplianceEvent(BaseModelReplaceNone):
+    """Level 3 compliance data events"""
+
+    event_type: str | None = Field(default="Not Available", alias="type")
+    currency_code: str | None = Field(default="Not Available", alias="currencyCode")
+    amount: int | None = Field(default=None, alias="amount")
+    event_date: str | None = Field(default="Not Available", alias="dateIso")
+    evidences: list[ComplianceEvidence] = Field(default=[], alias="evidences")
+
+
+class ComplianceRelEntry(BaseModelReplaceNone):
+    """Level 2 compliance regulatory list entries"""
+
+    category: str = Field(default="Not Available", alias="category")
+    subcategory: str = Field(default="Not Available", alias="subcategory")
+    events: list[ComplianceEvent] = Field(default=[], alias="events")
+
+
+class ComplianceAdvMediaEntry(BaseModelReplaceNone):
+    """Level 2 compliance adverse media entries"""
+
+    category: str = Field(default="Not Available", alias="category")
+    subcategory: str = Field(default="Not Available", alias="subcategory")
+    events: list[ComplianceEvent] = Field(default_factory=list, alias="events")
+
+
+class ComplianceIndividual(BaseModelReplaceNone):
+    """Level 3 compliance linked individual"""
+
+    first_name: str = Field(default="Not Available", alias="firstName")
+    last_name: str = Field(default="Not Available", alias="lastName")
+    relationship: str = Field(default="Not Available", alias="relationship")
+    ownership_percentage: float = Field(default=0, alias="ownershipPercentage")
+    datasets: list[str] = Field(default_factory=lambda: ["None"], alias="datasets")
+
+
+class CompliancePepEntry(BaseModelReplaceNone):
+    """Level 2 compliance pep list entries"""
+
+    position: str = Field(default="Not Available", alias="position")
+    segment: str = Field(default="Not Available", alias="segment")
+    status: str = Field(default="Not Available", alias="status")
+    tier: str = Field(default="Not Available", alias="tier")
+    country_code: str = Field(default="Not Available", alias="countryIsoCode")
+    date_from: str = Field(default="Not Available", alias="dateFrom")
+    date_to: str = Field(default="Not Available", alias="dateTo")
+    individual: ComplianceIndividual = Field(
+        default_factory=ComplianceIndividual, alias="individual"
+    )
+
+
 # Company compliance data
 class ComplianceData(BaseModelReplaceNone):
     """Base class with tag transformation."""
@@ -126,6 +191,9 @@ class ComplianceData(BaseModelReplaceNone):
         "PEP-FORMER",
         "PEP-CURRENT",
     ]
+    regulatory_enforcements: list[ComplianceRelEntry] = Field(
+        default=[], alias="relEntries"
+    )
 
     # Create boolean fields for each dataset and set to True if present
     @computed_field
@@ -199,8 +267,7 @@ class Ratios(BaseModelReplaceNone):
 class CraftCompany(BaseModelReplaceNone):
     """Primary company object"""
 
-    # FIXED: Using modern Python union syntax with '|'
-    id: int | str | None = Field(default=None, alias="id")
+    company_id: int | str | None = Field(default=None, alias="id")
     duns: int | str | None = Field(default=None, alias="duns")
     display_name: str = Field(default="None Found", alias="displayName")
     country_of_registration: str = Field(
@@ -226,7 +293,7 @@ class CraftCompany(BaseModelReplaceNone):
     # FIXED: Changed from single Ratios object to list of Ratios objects
     financial_ratios: list[Ratios] | None = Field(alias="ratios", default_factory=list)
 
-    @field_validator("id", mode="before")
+    @field_validator("company_id", mode="before")
     @classmethod
     def convert_id_to_int(cls, v):
         """Convert string ID to integer"""
@@ -263,7 +330,7 @@ class CraftCompanyLite(BaseModelReplaceNone):
     """Lite profile company object"""
 
     # FIXED: Using modern Python union syntax with '|'
-    id: int | str | None = Field(default=None, alias="id")
+    company_id: int | str | None = Field(default=None, alias="id")
     display_name: str = Field(default="None Found", alias="displayName")
     homepage: str | None = Field(default="None Found", alias="homepage")
     short_description: str | None = Field(
@@ -274,7 +341,7 @@ class CraftCompanyLite(BaseModelReplaceNone):
         default="Not Available", alias="countryOfRegistration"
     )
 
-    @field_validator("id", mode="before")
+    @field_validator("company_id", mode="after")
     @classmethod
     def convert_id_to_int(cls, v):
         """Convert string ID to integer"""
@@ -326,27 +393,21 @@ class DnbCompany(DnbCompanyBase):
 class CompanyData(BaseModel):
     """API response Data wrapper for a Craft company"""
 
-    company: CraftCompany | None = Field(alias="company")
+    company: CraftCompany = Field(alias="company")
 
 
 class Companies(BaseModel):
-    dnb_companies: list[CompanyData]
-
-
-class ApiException(BaseModel):
-    variable_key: str | None = None
-    data: dict[str, Any] | None = None
-    error: str | None = None
+    companies: list[CompanyData]
 
 
 class ApiResponse(BaseModel):
     """Top-level API response"""
 
-    data: CompanyData | None = None
+    data: CompanyData
     error: str | None = None
 
 
 class ApiResults(BaseModel):
     """List of responses"""
 
-    results: list[ApiResponse | ApiException | None]
+    results: list[ApiResponse]
